@@ -1,0 +1,62 @@
+name: Sync Fork with Upstream
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # バージョンタグがプッシュされた時にトリガー
+  workflow_dispatch: # 手動で実行可能
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Fork Repository
+      uses: actions/checkout@v2
+      with:
+        ref: minor
+
+    - name: Set Upstream Repository
+      run: |
+        git remote add upstream https://github.com/ryanheise/audio_service.git
+        git remote -v
+
+    - name: Fetch Upstream
+      run: git fetch upstream
+
+    - name: Rebase default onto Upstream
+      id: rebase
+      run: |
+        git rebase upstream/minor || echo "::set-output name=conflict::true"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Push Rebased Minor
+      if: steps.rebase.outputs.conflict != 'true'
+      run: |
+        git push origin minor --force
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Delete Existing Conflict Resolution Branch
+      if: steps.rebase.outputs.conflict == 'true'
+      run: |
+        git push origin --delete rebase-conflict-resolution || echo "Branch does not exist"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Create branch if Rebase Conflict
+      if: steps.rebase.outputs.conflict == 'true'
+      run: |
+        git rebase --abort
+        git checkout -b rebase-conflict-resolution upstream/minor
+        git push origin rebase-conflict-resolution
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Create Pull Request
+      if: steps.rebase.outputs.conflict == 'true'
+      run: |
+        curl -s -X POST -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+        -d '{"title":"Resolve Rebase Conflict Between Minor and Upstream","head":"rebase-conflict-resolution","base":"minor","body":"This pull request is created to resolve the rebase conflict between the minor and upstream/minor branches."}' \
+        https://api.github.com/repos/okt4hei/audio_service/pulls
